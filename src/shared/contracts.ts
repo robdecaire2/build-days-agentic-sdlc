@@ -60,6 +60,7 @@ export interface Feedback extends CreateFeedbackRequest {
   id: string;
   votes: number;
   createdAt: string;
+  status: FeedbackStatus;
 }
 
 export interface VoteResult {
