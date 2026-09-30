@@ -72,6 +72,19 @@ describe('handoff API', () => {
     expect(list[0]).toEqual(res.body);
   });
 
+  it('regression #25: repeated acknowledgement returns 409 and keeps the original timestamps', async () => {
+    const created = (await request(app).post('/api/handoffs').send(body)).body;
+    const first = await request(app).post(`/api/handoffs/${created.id}/acknowledge`);
+    expect(first.status).toBe(200);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const again = await request(app).post(`/api/handoffs/${created.id}/acknowledge`);
+      expect(again.status).toBe(409);
+      expect(again.body.error.code).toBe('already_acknowledged');
+    }
+    const stored = (await request(app).get('/api/handoffs')).body.handoffs[0];
+    expect(stored.acknowledgedAt).toBe(first.body.acknowledgedAt);
+    expect(stored.updatedAt).toBe(first.body.updatedAt);
+  });
   it.each(['unknown-id', 'bad%2Fid', 'a'.repeat(65)])('returns 404 for unknown or malformed id %s without changes', async (id) => {
     const res = await request(app).post(`/api/handoffs/${id}/acknowledge`);
     expect(res.status).toBe(404);

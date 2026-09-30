@@ -53,8 +53,18 @@ export function createHandoff(value, { id, now }) {
   };
 }
 
+export class AlreadyAcknowledgedError extends Error {
+  constructor(id) {
+    super('Handoff ' + id + ' is already acknowledged.');
+    this.name = 'AlreadyAcknowledgedError';
+  }
+}
+
 /** Move an open handoff to acknowledged. Returns a new object. */
 export function acknowledge(handoff, now) {
+  if (handoff.state === STATES.ACKNOWLEDGED) {
+    throw new AlreadyAcknowledgedError(handoff.id);
+  }
   const timestamp = now.toISOString();
   return { ...handoff, state: STATES.ACKNOWLEDGED, acknowledgedAt: timestamp, updatedAt: timestamp };
 }
