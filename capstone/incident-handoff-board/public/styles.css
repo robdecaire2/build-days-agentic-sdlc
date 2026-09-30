@@ -26,6 +26,11 @@ body {
   gap: 1.5rem;
 }
 
+.toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .panel {
   background: #ffffff;
   border: 1px solid #d1d5db;

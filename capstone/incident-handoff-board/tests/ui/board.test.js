@@ -5,7 +5,75 @@ import { mountBoard } from '../../public/app.js';
 
 describe('mountBoard', () => {
   beforeEach(() => {
+    localStorage.clear();
+    document.title = '';
     document.body.innerHTML = '<div id="test-root"></div>';
+  });
+
+  it('defaults to Normal mode with plain copy and aria-pressed false', async () => {
+    const fetch = vi.fn().mockResolvedValue(jsonResponse({ handoffs: [] }));
+
+    mountBoard(document.getElementById('test-root'), { fetch });
+    await flush();
+
+    const toggle = screen().getByRole('button', { name: 'Toggle vibe mode' });
+    expect(toggle.textContent).toContain('Mode: Normal');
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+    expect(document.title).toBe('Incident handoff board');
+    expect(document.body.textContent).toContain('No handoffs recorded yet.');
+    expect(screen().getByRole('button', { name: 'Record handoff' }).textContent).toBe('Record handoff');
+  });
+
+  it('flips visible copy in vibe mode without changing accessible button names', async () => {
+    const fetch = vi.fn().mockResolvedValue(
+      jsonResponse({
+        handoffs: [
+          sampleHandoff({ id: '1', service: 'checkout', state: 'open' }),
+          sampleHandoff({
+            id: '2',
+            service: 'payments',
+            state: 'acknowledged',
+            acknowledgedAt: '2026-02-02T12:00:00.000Z',
+            updatedAt: '2026-02-02T12:00:00.000Z',
+          }),
+        ],
+      }),
+    );
+
+    mountBoard(document.getElementById('test-root'), { fetch });
+    await flush();
+
+    const toggle = screen().getByRole('button', { name: 'Toggle vibe mode' });
+    toggle.click();
+    await flush();
+
+    expect(toggle.textContent).toContain('Mode: Vibe');
+    expect(toggle.getAttribute('aria-pressed')).toBe('true');
+    expect(document.title).toBe('Incident pass the aux board');
+    expect(document.body.textContent).toContain('Current passes on the aux');
+    expect(document.body.textContent).toContain('No cap, fixed');
+    expect(screen().getByRole('button', { name: 'Acknowledge checkout' }).textContent).toBe('Bet, I got this');
+    expect(screen().getByRole('button', { name: 'Record handoff' }).textContent).toBe('Pass the aux');
+  });
+
+  it('persists vibe mode across a remount with the same localStorage', async () => {
+    const fetch = vi.fn().mockResolvedValue(jsonResponse({ handoffs: [] }));
+
+    mountBoard(document.getElementById('test-root'), { fetch });
+    await flush();
+
+    screen().getByRole('button', { name: 'Toggle vibe mode' }).click();
+    await flush();
+
+    document.body.innerHTML = '<div id="test-root"></div>';
+    mountBoard(document.getElementById('test-root'), { fetch });
+    await flush();
+
+    const toggle = screen().getByRole('button', { name: 'Toggle vibe mode' });
+    expect(toggle.getAttribute('aria-pressed')).toBe('true');
+    expect(toggle.textContent).toContain('Mode: Vibe');
+    expect(document.title).toBe('Incident pass the aux board');
+    expect(document.body.textContent).toContain('No passes on the aux yet.');
   });
 
   it('shows a loading message before the empty state', async () => {
@@ -72,6 +140,9 @@ describe('mountBoard', () => {
     mountBoard(document.getElementById('test-root'), { fetch });
     await flush();
 
+    screen().getByRole('button', { name: 'Toggle vibe mode' }).click();
+    await flush();
+
     fillForm({
       service: ' checkout ',
       summary: 'Latency elevated',
@@ -94,10 +165,10 @@ describe('mountBoard', () => {
         }),
       }),
     );
-    expect(screen().getByRole('status').textContent).toContain('Recorded handoff for checkout.');
+    expect(screen().getByRole('status').textContent).toContain('Pass the aux logged for checkout.');
     expect(screen().getByLabelText('Service').value).toBe('');
     expect(screen().getByLabelText('Summary').value).toBe('');
-    expect(document.body.textContent).toContain('Open');
+    expect(document.body.textContent).toContain('Still live');
   });
 
   it('blocks invalid form input on the client and focuses the first invalid field', async () => {
