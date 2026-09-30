@@ -1,0 +1,78 @@
+name: Capstone incident handoff CI
+
+on:
+  pull_request:
+    paths:
+      - "capstone/incident-handoff-board/**"
+      - ".github/workflows/capstone-incident-handoff-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "capstone/incident-handoff-board/**"
+      - ".github/workflows/capstone-incident-handoff-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: capstone-incident-handoff-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: capstone/incident-handoff-board
+
+jobs:
+  validate:
+    name: Lint, test, build and smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: capstone/incident-handoff-board/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Test
+        run: npm test
+      - name: Start the application with the memory adapter
+        shell: bash
+        env:
+          PORT: "3000"
+          STORAGE_BACKEND: memory
+        run: |
+          set -euo pipefail
+          nohup npm start > application.log 2>&1 &
+          echo $! > application.pid
+      - name: Smoke - health, readiness, create and acknowledge
+        env:
+          BASE_URL: http://127.0.0.1:3000
+        run: node scripts/smoke.mjs
+      - name: Stop the application
+        if: always()
+        shell: bash
+        run: |
+          if [ -f application.pid ]; then kill "$(cat application.pid)" 2>/dev/null || true; fi
+          cat application.log || true
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capstone-incident-handoff-diagnostics
+          path: capstone/incident-handoff-board/application.log
+          if-no-files-found: ignore
+      - name: Summarize evidence
+        if: always()
+        run: |
+          {
+            echo "## Capstone incident handoff CI"
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- Job status: ${{ job.status }}"
+            echo "- Steps: npm ci, lint, unit/API/UI tests, start (memory adapter), smoke (health, ready, create-to-acknowledge)"
+          } >> "$GITHUB_STEP_SUMMARY"
