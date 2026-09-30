@@ -42,7 +42,7 @@ Alternatives:
 - Shared facilitator token in an environment variable: closer to "authorized" but requires an app setting and secret handling in `infra/`, which this change excludes.
 - UI-only "facilitator mode": cosmetic and could mislead participants about security.
 
-Risk: anyone reaching the app can advance items. Mitigations: forward-only rule, existing rate limiting, no deletion or editing of the original request. A production version would require real authentication and is a separate change.
+Risk: anyone reaching the app can advance items. Mitigations: forward-only rule, the global rate limiter (see Rate limiting), no deletion or editing of the original request. A production version would require real authentication and is a separate change.
 
 ### UI
 
@@ -52,7 +52,34 @@ Client reconciliation: update and vote results are merged per item so a late res
 
 ### Observability
 
-Log `status_changed` with exactly `id`, `from`, and `to` at info using the existing logger; no request body or personal data. An API test asserts the event name and fields. The existing rate limiter covers the route.
+Log `status_changed` with exactly `id`, `from`, and `to` at info using the existing logger; no request body or personal data. An API test asserts the event name and fields.
+
+### Rate limiting
+
+Verified in `src/server/app.ts`: `rateLimit` is installed with `app.use` before any route (120 requests per 60 s per client, `skip` only for `/health`), and its handler returns 429 `RATE_LIMITED`. The new `PATCH /api/feedback/:id/status` route is covered automatically, provided it is registered after that middleware. Task 3 must keep that order and add a test that a status request over the limit gets 429 without touching storage.
+
+### Ownership of the error code and message
+
+`INVALID_STATUS_TRANSITION` is a plain string `code` on the existing `ApiError` shape; `src/shared/contracts.ts` has no code enum, so task 1 does not own it.
+
+- Task 2 owns `InvalidStatusTransitionError` in `src/server/storage.ts`; it carries `from`, `to`, and the allowed next status and builds the actionable message ("Status can only move from new to planned.").
+- Task 3 owns the literal `INVALID_STATUS_TRANSITION` code and the 409 mapping in the `src/server/app.ts` error handler, using the error's message.
+- Task 1 owns only `nextStatus`, the status enum, and `updateStatusSchema`.
+- Task 4 treats the code as opaque and relies only on the HTTP status and `error.message`.
+
+### Issue wording reconciliation
+
+Issue #1 says "optional status" and "authorized workshop user". In this change every item always has a status (`new` when nothing is stored), so "optional" describes the stored property and the API input, not a nullable status. "Authorized" means any workshop participant with access to the board; the workshop enforces no authorization.
+
+### User-facing documentation of the mechanism
+
+The workshop-only mechanism must also be visible to users. Task 4 shows a short in-app note next to the controls ("Workshop only: anyone using this board can advance status.") and tests it. No separate docs file changes: `docs/features/feedback-status.md` remains the untouched brief, and the authoritative description lives in this `design.md` and the implementation PR.
+
+### Branches, pull requests, and receipts
+
+- Each implementation task uses its own branch `feedback-status/task-<n>-<slug>` from current `main` and its own pull request into `main` of the fork, with `Refs #1` (never a closing keyword) and the repository PR template.
+- "Task 1 merged" means its PR is merged into `main` after the required checks pass; later tasks branch from or rebase onto that `main`. Task 3 starts after task 2 is merged; task 4 starts after task 1 is merged. Fleet may run tasks 2 and 4 in parallel only after task 1 is merged.
+- Receipts: each task's PR body has a "Task receipt" section (format in `tasks.md`), and the task owner also posts a short comment on issue #1 linking the PR. The owner of task 5.2 assembles the final evidence checklist as a comment on issue #1 and in the last PR. The conversation transcript is never evidence.
 
 ## Risks / Trade-offs
 

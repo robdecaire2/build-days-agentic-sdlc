@@ -67,6 +67,11 @@ Any workshop participant with access to the board SHALL be able to advance statu
 - **WHEN** a reviewer inspects the change design and implementation diff
 - **THEN** the unauthenticated workshop-only mechanism is documented and no infrastructure, workflow, or credential change is present
 
+#### Scenario: Users see the workshop-only notice
+
+- **WHEN** the board renders items with advance controls
+- **THEN** a visible note states that the status control is workshop-only and open to anyone using the board
+
 ### Requirement: Voting is unaffected
 
 Adding status SHALL NOT change voting behavior or vote counts.
@@ -74,12 +79,17 @@ Adding status SHALL NOT change voting behavior or vote counts.
 #### Scenario: Status change keeps votes
 
 - **WHEN** an item with votes is advanced
-- **THEN** its vote count is unchanged and repeat-vote prevention still applies
+- **THEN** its vote count is unchanged and repeat-vote prevention for the same client identifier still applies
 
 #### Scenario: Vote keeps status
 
 - **WHEN** a user votes on an item that is `planned`
 - **THEN** the item remains `planned` and the vote count increases by one
+
+#### Scenario: Repeat vote on an advanced item
+
+- **WHEN** the same client identifier votes again on an item after it was advanced
+- **THEN** the vote count and status are unchanged and the response reports the vote already exists
 
 ### Requirement: Accessible status display and control
 

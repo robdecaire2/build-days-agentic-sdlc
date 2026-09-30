@@ -8,6 +8,7 @@ Workshop users cannot tell new feedback from items being considered or completed
 - New feedback starts as `new`; existing stored feedback without a status reads as `new`.
 - The board displays each item's status.
 - Any workshop participant with access to the board can advance an item forward only (`new` -> `planned` -> `done`) through a documented, workshop-only, unauthenticated API/UI mechanism; no authorization is enforced or implied.
+- Wording note: issue #1 says "optional status" and "authorized workshop user". Here every item always has a status (`new` when none is stored), and "authorized" means any participant with access to the board; see `design.md`.
 - Skipping, reversing, repeating, or using unknown values is rejected with an actionable response; unknown identifiers create no data.
 - Voting behavior and counts are unchanged.
 
