@@ -5,6 +5,7 @@ import { mountBoard } from '../../public/app.js';
 
 describe('mountBoard', () => {
   beforeEach(() => {
+    localStorage.clear();
     document.body.innerHTML = '<div id="test-root"></div>';
   });
 
@@ -310,6 +311,116 @@ describe('mountBoard', () => {
     await flush();
 
     expect(document.body.textContent).toContain('Acknowledged');
+  });
+
+  it('switches display copy while keeping accessible action names plain', async () => {
+    const fetch = vi.fn().mockResolvedValue(
+      jsonResponse({
+        handoffs: [
+          sampleHandoff({ id: '1', service: 'checkout', state: 'open' }),
+          sampleHandoff({
+            id: '2',
+            service: 'payments',
+            state: 'acknowledged',
+            acknowledgedAt: '2026-02-02T12:00:00.000Z',
+          }),
+        ],
+      }),
+    );
+
+    mountBoard(document.getElementById('test-root'), { fetch });
+    await flush();
+
+    const vibeToggle = screen().getByRole('button', { name: 'Toggle Vibe mode' });
+    expect(vibeToggle.getAttribute('aria-pressed')).toBe('false');
+    vibeToggle.focus();
+    vibeToggle.click();
+
+    expect(document.body.textContent).toContain('Bet, I got this checkout');
+    expect(document.body.textContent).toContain('No cap, fixed');
+    expect(vibeToggle.textContent).toBe('Vibe mode: Gen Z/Alpha');
+    expect(vibeToggle.getAttribute('aria-pressed')).toBe('true');
+    expect(screen().getByRole('button', { name: 'Acknowledge checkout' })).toBeTruthy();
+    expect(screen().getByRole('button', { name: 'Record handoff' }).textContent).toBe('Send it');
+  });
+
+  it('persists the language choice across a remount', async () => {
+    const fetch = vi.fn().mockResolvedValue(jsonResponse({ handoffs: [] }));
+    const root = document.getElementById('test-root');
+
+    mountBoard(root, { fetch });
+    await flush();
+    screen().getByRole('button', { name: 'Toggle Vibe mode' }).click();
+
+    mountBoard(root, { fetch });
+    await flush();
+
+    expect(screen().getByRole('button', { name: 'Toggle Vibe mode' }).getAttribute('aria-pressed')).toBe('true');
+    expect(document.body.textContent).toContain('No handoffs in the chat yet.');
+  });
+
+  it('keeps the API contract unchanged in Vibe mode', async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          handoffs: [sampleHandoff({ id: 'handoff-1', service: 'checkout', state: 'open' })],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(
+          sampleHandoff({
+            id: 'handoff-1',
+            service: 'checkout',
+            state: 'acknowledged',
+            acknowledgedAt: '2026-02-02T12:00:00.000Z',
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(
+          sampleHandoff({
+            id: 'handoff-2',
+            service: 'payments',
+            summary: 'Latency elevated',
+            nextAction: 'Watch p95',
+          }),
+          { status: 201 },
+        ),
+      );
+
+    mountBoard(document.getElementById('test-root'), { fetch });
+    await flush();
+    screen().getByRole('button', { name: 'Toggle Vibe mode' }).click();
+
+    screen().getByRole('button', { name: 'Acknowledge checkout' }).click();
+    await flush();
+    fillForm({
+      service: 'payments',
+      summary: 'Latency elevated',
+      nextAction: 'Watch p95',
+    });
+    screen()
+      .getByRole('button', { name: 'Record handoff' })
+      .closest('form')
+      .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await flush();
+
+    expect(fetch).toHaveBeenNthCalledWith(2, '/api/handoffs/handoff-1/acknowledge', {
+      method: 'POST',
+    });
+    expect(fetch).toHaveBeenNthCalledWith(
+      3,
+      '/api/handoffs',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          service: 'payments',
+          summary: 'Latency elevated',
+          nextAction: 'Watch p95',
+        }),
+      }),
+    );
   });
 });
 

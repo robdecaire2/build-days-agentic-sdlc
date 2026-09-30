@@ -6,10 +6,40 @@ const FIELD_LABELS = Object.freeze({
   summary: 'Summary',
   nextAction: 'Next action',
 });
+const LANGUAGE_STORAGE_KEY = 'incident-handoff-board-language';
+const LANGUAGE_MODES = Object.freeze({
+  normal: 'normal',
+  vibe: 'vibe',
+});
+const COPY = Object.freeze({
+  normal: Object.freeze({
+    formHeading: 'Record a handoff',
+    listHeading: 'Current handoffs',
+    submit: 'Record handoff',
+    loading: 'Loading handoffs…',
+    empty: 'No handoffs recorded yet.',
+    open: 'Open',
+    acknowledged: 'Acknowledged',
+    acknowledge: 'Acknowledge',
+  }),
+  vibe: Object.freeze({
+    formHeading: 'Drop a handoff',
+    listHeading: "What's live",
+    submit: 'Send it',
+    loading: 'Loading the lore…',
+    empty: 'No handoffs in the chat yet.',
+    open: 'Still cooking',
+    acknowledged: 'No cap, fixed',
+    acknowledge: 'Bet, I got this',
+  }),
+});
 
 let mountCount = 0;
 
-export function mountBoard(root, { fetch = globalThis.fetch.bind(globalThis) } = {}) {
+export function mountBoard(
+  root,
+  { fetch = globalThis.fetch.bind(globalThis), storage = globalThis.localStorage } = {},
+) {
   if (!root) {
     throw new Error('mountBoard requires a root element.');
   }
@@ -20,6 +50,7 @@ export function mountBoard(root, { fetch = globalThis.fetch.bind(globalThis) } =
   const errorRefs = new Map();
   let handoffs = [];
   let retryAction = null;
+  let languageMode = LANGUAGE_MODES.normal;
 
   root.replaceChildren();
 
@@ -31,19 +62,37 @@ export function mountBoard(root, { fetch = globalThis.fetch.bind(globalThis) } =
     ariaLive: 'polite',
   });
   const alertRegion = createElement('div');
+  const languageToggle = createElement('button', {
+    type: 'button',
+    className: 'secondary language-toggle',
+    text: 'Vibe mode: Normal',
+    ariaLabel: 'Toggle Vibe mode',
+  });
   const formSection = createElement('section', { className: 'panel' });
   const listSection = createElement('section', { className: 'panel' });
-  const listHeading = createElement('h2', { text: 'Current handoffs' });
+  const formHeading = createElement('h2');
+  const listHeading = createElement('h2');
   const listStatus = createElement('p', { className: 'list-status', role: 'status' });
   const handoffList = createElement('ul', { className: 'handoff-list' });
   const form = createElement('form');
-  const submitButton = createElement('button', { type: 'submit', text: 'Record handoff' });
+  const submitButton = createElement('button', {
+    type: 'submit',
+    text: COPY.normal.submit,
+    ariaLabel: 'Record handoff',
+  });
 
   messageSection.append(statusRegion, alertRegion);
-  formSection.append(createElement('h2', { text: 'Record a handoff' }), form);
+  formSection.append(formHeading, form);
   listSection.append(listHeading, listStatus, handoffList);
-  board.append(messageSection, formSection, listSection);
+  board.append(languageToggle, messageSection, formSection, listSection);
   root.append(board);
+
+  languageToggle.addEventListener('click', () => {
+    languageMode =
+      languageMode === LANGUAGE_MODES.normal ? LANGUAGE_MODES.vibe : LANGUAGE_MODES.normal;
+    applyLanguage();
+    persistLanguageMode(storage, languageMode, alertRegion);
+  });
 
   for (const field of FIELD_ORDER) {
     const inputId = `${idPrefix}-${field}`;
@@ -62,6 +111,8 @@ export function mountBoard(root, { fetch = globalThis.fetch.bind(globalThis) } =
   }
 
   form.append(submitButton);
+  languageMode = readLanguageMode(storage, alertRegion);
+  applyLanguage();
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -121,7 +172,7 @@ export function mountBoard(root, { fetch = globalThis.fetch.bind(globalThis) } =
     if (!preserveAlert) {
       clearAlert(alertRegion);
     }
-    listStatus.textContent = 'Loading handoffs…';
+    listStatus.textContent = copy().loading;
     handoffList.replaceChildren();
 
     try {
@@ -148,7 +199,7 @@ export function mountBoard(root, { fetch = globalThis.fetch.bind(globalThis) } =
     handoffList.replaceChildren();
 
     if (handoffs.length === 0) {
-      listStatus.textContent = 'No handoffs recorded yet.';
+      listStatus.textContent = copy().empty;
       return;
     }
 
@@ -175,15 +226,16 @@ export function mountBoard(root, { fetch = globalThis.fetch.bind(globalThis) } =
 
     if (handoff.state === 'acknowledged') {
       state.append(
-        document.createTextNode('Acknowledged'),
+        document.createTextNode(copy().acknowledged),
         document.createTextNode(' at '),
         createElement('time', { dateTime: handoff.acknowledgedAt, text: handoff.acknowledgedAt }),
       );
     } else {
-      state.textContent = 'Open';
+      state.textContent = copy().open;
       const button = createElement('button', {
         type: 'button',
-        text: `Acknowledge ${handoff.service}`,
+        text: `${copy().acknowledge} ${handoff.service}`,
+        ariaLabel: `Acknowledge ${handoff.service}`,
       });
       button.addEventListener('click', () => acknowledgeHandoff(handoff, button));
       item.append(heading, summary, nextAction, state, created, button);
@@ -192,6 +244,21 @@ export function mountBoard(root, { fetch = globalThis.fetch.bind(globalThis) } =
 
     item.append(heading, summary, nextAction, state, created);
     return item;
+  }
+
+  function copy() {
+    return COPY[languageMode];
+  }
+
+  function applyLanguage() {
+    const activeCopy = copy();
+    formHeading.textContent = activeCopy.formHeading;
+    listHeading.textContent = activeCopy.listHeading;
+    submitButton.textContent = activeCopy.submit;
+    languageToggle.textContent =
+      languageMode === LANGUAGE_MODES.vibe ? 'Vibe mode: Gen Z/Alpha' : 'Vibe mode: Normal';
+    languageToggle.setAttribute('aria-pressed', String(languageMode === LANGUAGE_MODES.vibe));
+    renderHandoffs();
   }
 
   async function acknowledgeHandoff(handoff, button) {
@@ -314,6 +381,25 @@ function describeAcknowledgeFailure(status, service, fallbackMessage) {
   return `Could not acknowledge ${service}. ${fallbackMessage || 'Try again.'}`;
 }
 
+function readLanguageMode(storage, alertRegion) {
+  try {
+    return storage?.getItem(LANGUAGE_STORAGE_KEY) === LANGUAGE_MODES.vibe
+      ? LANGUAGE_MODES.vibe
+      : LANGUAGE_MODES.normal;
+  } catch (error) {
+    showAlert(alertRegion, `Could not load the display language preference. ${error.message}`);
+    return LANGUAGE_MODES.normal;
+  }
+}
+
+function persistLanguageMode(storage, mode, alertRegion) {
+  try {
+    storage?.setItem(LANGUAGE_STORAGE_KEY, mode);
+  } catch (error) {
+    showAlert(alertRegion, `Could not save the display language preference. ${error.message}`);
+  }
+}
+
 async function readJson(response) {
   try {
     return await response.json();
@@ -345,6 +431,9 @@ function createElement(tagName, options = {}) {
   }
   if (options.ariaLive) {
     element.setAttribute('aria-live', options.ariaLive);
+  }
+  if (options.ariaLabel) {
+    element.setAttribute('aria-label', options.ariaLabel);
   }
   if (options.for) {
     element.htmlFor = options.for;
