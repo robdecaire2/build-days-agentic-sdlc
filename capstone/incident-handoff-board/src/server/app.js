@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
-import { acknowledge, createHandoff, sortHandoffs, validateNewHandoff } from '../contract/handoff.js';
+import { AlreadyAcknowledgedError, acknowledge, createHandoff, sortHandoffs, validateNewHandoff } from '../contract/handoff.js';
 import { StorageUnavailableError } from '../storage/port.js';
 
 const ID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
@@ -73,6 +73,9 @@ export function createApp({ store, now = () => new Date(), newId = randomUUID, p
     }
     if (err?.type === 'entity.too.large') {
       return sendError(res, 413, 'payload_too_large', 'Request body is too large.');
+    }
+    if (err instanceof AlreadyAcknowledgedError) {
+      return sendError(res, 409, 'already_acknowledged', 'This handoff has already been acknowledged.');
     }
     if (err instanceof StorageUnavailableError) {
       return sendError(res, 503, 'storage_unavailable', 'Storage is temporarily unavailable. Try again.');

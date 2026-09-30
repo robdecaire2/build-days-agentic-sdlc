@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AlreadyAcknowledgedError,
   LIMITS,
   STATES,
   acknowledge,
@@ -92,5 +93,11 @@ describe('ordering', () => {
 
   it('reports equality for identical entries', () => {
     expect(compareHandoffs(make('a', 'x'), make('a', 'x'))).toBe(0);
+  });
+
+  it('regression #25: rejects acknowledging an already acknowledged handoff', () => {
+    const open = createHandoff({ service: 's', summary: 'x', nextAction: 'y' }, { id: 'h1', now: new Date(0) });
+    const acked = acknowledge(open, new Date(1000));
+    expect(() => acknowledge(acked, new Date(2000))).toThrow(AlreadyAcknowledgedError);
   });
 });
