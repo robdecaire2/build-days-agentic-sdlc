@@ -302,3 +302,30 @@ time,
     width: min(100% - 2rem, 560px);
   }
 }
+
+.status-badge {
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  padding: 0.1rem 0.6rem;
+}
+
+.workshop-note {
+  font-size: 0.9rem;
+  font-style: italic;
+}
+
+.advance {
+  margin-inline-start: auto;
+}
+
+.visually-hidden {
+  border: 0;
+  clip: rect(0 0 0 0);
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  width: 1px;
+}

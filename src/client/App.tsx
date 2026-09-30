@@ -2,14 +2,18 @@ import { useEffect, useId, useState, type FormEvent } from "react";
 import {
   feedbackCategories,
   fieldLimits,
+  nextStatus,
   type CreateFeedbackRequest,
   type Feedback,
+  type FeedbackStatus,
 } from "../shared/contracts.js";
 import {
   ApiRequestError,
   createFeedback,
   listFeedback,
+  updateFeedbackStatus,
   voteForFeedback,
+  type FeedbackItem,
 } from "./api.js";
 
 const emptyForm: CreateFeedbackRequest = {
@@ -29,7 +33,7 @@ const getClientId = (): string => {
 };
 
 export function App() {
-  const [items, setItems] = useState<Feedback[]>([]);
+  const [items, setItems] = useState<FeedbackItem[]>([]);
   const [form, setForm] = useState(emptyForm);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(true);
@@ -38,6 +42,9 @@ export function App() {
   const [error, setError] = useState<string>();
   const [loadFailed, setLoadFailed] = useState(false);
   const [notice, setNotice] = useState<string>();
+  const [updatingIds, setUpdatingIds] = useState<ReadonlySet<string>>(new Set());
+  const [statusError, setStatusError] = useState<string>();
+  const [statusNotice, setStatusNotice] = useState<string>();
   const formStatusId = useId();
 
   useEffect(() => {
@@ -87,7 +94,9 @@ export function App() {
       const result = await voteForFeedback(item.id, getClientId());
       setItems((current) =>
         current.map((candidate) =>
-          candidate.id === item.id ? result.feedback : candidate,
+          candidate.id === item.id
+            ? { ...candidate, votes: result.feedback.votes }
+            : candidate,
         ),
       );
       setNotice(
@@ -99,6 +108,46 @@ export function App() {
       setError(messageFor(voteError));
     } finally {
       setVotingId(undefined);
+    }
+  }
+
+  async function advance(item: FeedbackItem, target: FeedbackStatus) {
+    setUpdatingIds((current) => new Set(current).add(item.id));
+    setStatusError(undefined);
+    setStatusNotice(undefined);
+    try {
+      const updated = await updateFeedbackStatus(item.id, target);
+      setItems((current) =>
+        current.map((candidate) =>
+          candidate.id === item.id
+            ? { ...candidate, status: updated.status ?? target }
+            : candidate,
+        ),
+      );
+      setStatusNotice(`“${item.title}” is now ${updated.status ?? target}.`);
+    } catch (updateError) {
+      if (updateError instanceof ApiRequestError && updateError.httpStatus === 409) {
+        try {
+          setItems(await listFeedback());
+          setStatusNotice(
+            `“${item.title}” was changed elsewhere. The board now shows its latest status.`,
+          );
+        } catch (reloadError) {
+          setStatusError(
+            `Could not update “${item.title}”: ${messageFor(reloadError)}`,
+          );
+        }
+      } else {
+        setStatusError(
+          `Could not update “${item.title}”: ${messageFor(updateError)}`,
+        );
+      }
+    } finally {
+      setUpdatingIds((current) => {
+        const remaining = new Set(current);
+        remaining.delete(item.id);
+        return remaining;
+      });
     }
   }
 
@@ -189,6 +238,21 @@ export function App() {
               {items.length}
             </span>
           </div>
+          {statusError && (
+            <p className="error" role="alert">
+              {statusError}
+            </p>
+          )}
+          {statusNotice && (
+            <p className="success" role="status">
+              {statusNotice}
+            </p>
+          )}
+          {!loading && !loadFailed && items.length > 0 && (
+            <p className="workshop-note">
+              Workshop only: anyone using this board can advance status.
+            </p>
+          )}
           {loading ? (
             <p className="state" role="status">
               Loading feedback…
@@ -205,11 +269,18 @@ export function App() {
             </div>
           ) : (
             <ul className="feedback-list">
-              {items.map((item) => (
+              {items.map((item) => {
+                const status = item.status ?? "new";
+                const target = nextStatus(status);
+                const updating = updatingIds.has(item.id);
+                return (
                 <li className="feedback-card" key={item.id}>
                   <div className="card-topline">
                     <span className={`category category-${item.category}`}>
                       {item.category}
+                    </span>
+                    <span className={`status-badge status-${status}`}>
+                      Status: {status}
                     </span>
                     <time dateTime={item.createdAt}>
                       {new Intl.DateTimeFormat(undefined, {
@@ -221,6 +292,22 @@ export function App() {
                   <p>{item.description}</p>
                   <div className="card-footer">
                     <span>By {item.displayName}</span>
+                    {target && (
+                      <button
+                        className="advance"
+                        type="button"
+                        disabled={updating}
+                        aria-label={`Mark ${item.title} as ${target}`}
+                        onClick={() => void advance(item, target)}
+                      >
+                        {updating ? "Updating…" : `Mark ${target}`}
+                      </button>
+                    )}
+                    {updating && (
+                      <span className="visually-hidden" role="status">
+                        Updating {item.title}
+                      </span>
+                    )}
                     <button
                       className="vote"
                       type="button"
@@ -233,7 +320,8 @@ export function App() {
                     </button>
                   </div>
                 </li>
-              ))}
+                );
+              })}
             </ul>
           )}
         </section>
