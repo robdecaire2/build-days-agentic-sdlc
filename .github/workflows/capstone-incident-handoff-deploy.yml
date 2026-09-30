@@ -2,6 +2,15 @@ name: Deploy capstone incident handoff board
 
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Choose preview-only what-if or live deploy
+        required: true
+        default: what-if
+        type: choice
+        options:
+          - what-if
+          - deploy
 
 permissions:
   contents: read
@@ -39,7 +48,7 @@ jobs:
           if [ "$configured" != "true" ]; then
             echo "Azure deployment NOT performed: required OIDC variables are not configured" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "Azure deployment configuration present for environment \`capstone-incident-handoff\`." >> "$GITHUB_STEP_SUMMARY"
+            echo "Azure configuration present for environment \`capstone-incident-handoff\`; requested mode is \`${{ inputs.mode }}\`." >> "$GITHUB_STEP_SUMMARY"
           fi
 
   deploy:
@@ -64,14 +73,32 @@ jobs:
       - name: Build Bicep
         run: az bicep build --file capstone/incident-handoff-board/infra/main.bicep
 
+      - name: Lint Bicep
+        run: az bicep lint --file capstone/incident-handoff-board/infra/main.bicep
+
       - uses: azure/login@v2
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Preview infrastructure changes
+        id: what_if
+        shell: bash
+        env:
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          TEAM_ID: ${{ vars.TEAM_ID }}
+        run: |
+          set -euo pipefail
+          az deployment group what-if \
+            --name "capstone-handoff-preview-${GITHUB_RUN_ID}" \
+            --resource-group "$RESOURCE_GROUP" \
+            --template-file capstone/incident-handoff-board/infra/main.bicep \
+            --parameters capstone/incident-handoff-board/infra/main.example.bicepparam teamIdentifier="$TEAM_ID"
+
       - name: Deploy infrastructure
         id: deploy_infra
+        if: inputs.mode == 'deploy'
         shell: bash
         env:
           RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
@@ -103,6 +130,7 @@ jobs:
           echo "deployment_identifier=$deployment_identifier" >> "$GITHUB_OUTPUT"
 
       - name: Package application
+        if: inputs.mode == 'deploy'
         shell: bash
         run: |
           set -euo pipefail
@@ -110,12 +138,15 @@ jobs:
           zip -r "$RUNNER_TEMP/incident-handoff-board.zip" package.json package-lock.json src public
 
       - uses: actions/upload-artifact@v4
+        if: inputs.mode == 'deploy'
         with:
           name: capstone-incident-handoff-package
           path: ${{ runner.temp }}/incident-handoff-board.zip
           if-no-files-found: error
 
       - name: Deploy application package
+        id: deploy_application
+        if: inputs.mode == 'deploy'
         shell: bash
         env:
           RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
@@ -131,9 +162,11 @@ jobs:
             --restart true
 
       - name: Install smoke-test dependencies
+        if: inputs.mode == 'deploy'
         run: npm ci --prefix capstone/incident-handoff-board
 
       - name: Verify live deployment
+        if: inputs.mode == 'deploy'
         shell: bash
         env:
           BASE_URL: ${{ steps.deploy_infra.outputs.app_url }}
@@ -157,6 +190,25 @@ jobs:
           # Depends on Task 4 adding capstone/incident-handoff-board/scripts/smoke.mjs.
           node capstone/incident-handoff-board/scripts/smoke.mjs
 
+      - name: Record rollback instructions
+        if: failure() && steps.deploy_application.outcome != 'skipped'
+        shell: bash
+        env:
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          APP_NAME: ${{ steps.deploy_infra.outputs.app_name }}
+          DEPLOYMENT_IDENTIFIER: ${{ steps.deploy_infra.outputs.deployment_identifier }}
+        run: |
+          {
+            echo "## Rollback required"
+            echo "- Live deploy mode failed after the application package step started."
+            echo "- Redeploy the previous successful package with:"
+            echo "  \`az webapp deploy --resource-group ${RESOURCE_GROUP} --name ${APP_NAME} --src-path <previous-package.zip> --type zip --clean true --restart true\`"
+            echo "- Or redeploy the previous infrastructure/application commit with:"
+            echo "  \`az deployment group create --name <previous-deployment-name> --resource-group ${RESOURCE_GROUP} --template-file capstone/incident-handoff-board/infra/main.bicep --parameters capstone/incident-handoff-board/infra/main.example.bicepparam teamIdentifier=${{ vars.TEAM_ID }}\`"
+            echo "- Last attempted deployment identifier: \`${DEPLOYMENT_IDENTIFIER:-not-created}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
       - name: Summarize deployment evidence
         env:
           APP_URL: ${{ steps.deploy_infra.outputs.app_url }}
@@ -165,8 +217,14 @@ jobs:
         run: |
           {
             echo "## Capstone incident handoff deployment"
+            echo "- Requested mode: \`${{ inputs.mode }}\`"
             echo "- Commit: \`${GITHUB_SHA}\`"
-            echo "- URL: ${APP_URL}"
-            echo "- Deployment ID: \`${DEPLOYMENT_IDENTIFIER}\`"
-            echo "- App resource ID: \`${APP_RESOURCE_ID}\`"
+            if [ "${{ inputs.mode }}" = "what-if" ]; then
+              echo "- Azure writes: not performed"
+              echo "- Infrastructure preview: completed with \`az deployment group what-if\`"
+            else
+              echo "- URL: ${APP_URL}"
+              echo "- Deployment ID: \`${DEPLOYMENT_IDENTIFIER}\`"
+              echo "- App resource ID: \`${APP_RESOURCE_ID}\`"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"

@@ -40,6 +40,36 @@ identity without creating a circular dependency, so the web app receives only
 the `Storage Table Data Contributor` data-plane role at the storage account
 scope.
 
+## Pipeline
+
+`/.github/workflows/capstone-incident-handoff-deploy.yml` is manual-only and
+defaults to **no Azure writes**.
+
+- **Trigger:** `workflow_dispatch`
+- **Input:** `mode` = `what-if` (default) or `deploy`
+- **Jobs:**
+  - `configuration` checks `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
+    `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`, and `TEAM_ID`. When any
+    are missing, it writes `Azure deployment NOT performed: required OIDC
+    variables are not configured` and the environment-gated job is skipped.
+  - `deploy` is protected by the `capstone-incident-handoff` environment,
+    builds and lints Bicep, logs into Azure with OIDC, and always runs
+    `az deployment group what-if`.
+- **Gates:** the environment gate and OIDC variables are required before any
+  Azure call. `mode: deploy` is required before `az deployment group create`,
+  `az webapp deploy`, and live smoke verification can run.
+- **Artifacts:** deploy mode packages `package.json`, `package-lock.json`,
+  `src/`, and `public/` into a zip and uploads it as the
+  `capstone-incident-handoff-package` workflow artifact before `az webapp deploy`.
+- **Failure / rollback:** if deploy mode fails after the app deployment step
+  starts, the workflow writes rollback instructions to the step summary:
+  redeploy the prior successful zip package with `az webapp deploy`, or rerun
+  `az deployment group create` from the previous known-good commit.
+
+For this PR's evidence, the deploy target was **LOCAL**: Azure was not used,
+no workflow run reached the protected environment, and nothing has been run in
+Azure.
+
 ## Validate
 
 ```powershell
@@ -60,4 +90,6 @@ az deployment group what-if `
 
 `validate` and `what-if` require GitHub OIDC or another approved Azure login
 for the assigned team resource group. Nothing has been deployed unless a real
-workflow run or Azure command output proves it.
+workflow run or Azure command output proves it. If a live deploy fails after
+uploading the application package, follow the workflow summary rollback
+instructions and redeploy the previous known-good artifact or commit.
