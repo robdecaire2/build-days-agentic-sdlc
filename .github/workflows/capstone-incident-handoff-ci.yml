@@ -60,6 +60,18 @@ jobs:
         run: |
           if [ -f application.pid ]; then kill "$(cat application.pid)" 2>/dev/null || true; fi
           cat application.log || true
+      - name: Package application (build)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/pkg"
+          zip -qr "$RUNNER_TEMP/pkg/incident-handoff-board.zip" package.json package-lock.json src public
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: capstone-incident-handoff-package
+          path: ${{ runner.temp }}/pkg/incident-handoff-board.zip
+          if-no-files-found: error
       - name: Upload diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
@@ -76,3 +88,17 @@ jobs:
             echo "- Job status: ${{ job.status }}"
             echo "- Steps: npm ci, lint, unit/API/UI tests, start (memory adapter), smoke (health, ready, create-to-acknowledge)"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  bicep:
+    name: Validate Bicep (no Azure access)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and lint Bicep
+        run: |
+          az bicep build --file capstone/incident-handoff-board/infra/main.bicep --stdout > /dev/null
+          az bicep lint --file capstone/incident-handoff-board/infra/main.bicep
