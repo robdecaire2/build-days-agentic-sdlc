@@ -4,9 +4,9 @@ import userEvent from "@testing-library/user-event";
 import { App } from "../src/client/App.js";
 import type { Feedback, FeedbackStatus } from "../src/shared/contracts.js";
 
-type Item = Feedback & { status?: FeedbackStatus };
+type Item = Feedback;
 
-const makeItem = (id: string, title: string, status?: FeedbackStatus): Item => ({
+const makeItem = (id: string, title: string, status: FeedbackStatus = "new"): Item => ({
   id,
   title,
   description: "Details",
@@ -14,7 +14,7 @@ const makeItem = (id: string, title: string, status?: FeedbackStatus): Item => (
   displayName: "Sam",
   votes: 2,
   createdAt: "2025-01-01T00:00:00.000Z",
-  ...(status ? { status } : {}),
+  status,
 });
 
 const apiError = (status: number, message: string, code = "ERROR"): Response =>

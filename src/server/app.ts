@@ -7,15 +7,20 @@ import { rateLimit } from "express-rate-limit";
 import { ZodError, type ZodType } from "zod";
 import {
   createFeedbackSchema,
+  feedbackStatuses,
+  nextStatus,
+  updateStatusSchema,
   voteRequestSchema,
   type ApiError,
   type CreateFeedbackRequest,
+  type FeedbackStatus,
+  type UpdateStatusRequest,
   type VoteRequest,
 } from "../shared/contracts.js";
 import { logger as defaultLogger, type Logger } from "./logger.js";
 import {
   FeedbackNotFoundError,
-  type FeedbackStorage,
+  InvalidStatusTransitionError,  type FeedbackStorage,
 } from "./storage.js";
 
 export interface AppOptions {
@@ -117,6 +122,27 @@ export const createApp = ({
     },
   );
 
+  app.patch(
+    "/api/feedback/:id/status",
+    validateBody(updateStatusSchema),
+    async (request, response) => {
+      const id = request.params.id;
+      if (typeof id !== "string") {
+        response.status(404).json({
+          error: { code: "NOT_FOUND", message: "Feedback was not found." },
+        } satisfies ApiError);
+        return;
+      }
+      const { status } = request.body as UpdateStatusRequest;
+      const feedback = await storage.updateStatus(id, status);
+      logger.log("info", "status_changed", {
+        id,
+        from: previousStatus(status),
+        to: status,
+      });
+      response.json({ feedback });
+    },
+  );
   if (staticDirectory) {
     app.use(express.static(staticDirectory));
     app.get("*splat", (_request, response) => {
@@ -128,6 +154,12 @@ export const createApp = ({
     if (error instanceof FeedbackNotFoundError) {
       response.status(404).json({
         error: { code: "NOT_FOUND", message: "Feedback was not found." },
+      } satisfies ApiError);
+      return;
+    }
+    if (error instanceof InvalidStatusTransitionError) {
+      response.status(409).json({
+        error: { code: "INVALID_STATUS_TRANSITION", message: error.message },
       } satisfies ApiError);
       return;
     }
@@ -174,3 +206,6 @@ function validateBody(schema: ZodType): RequestHandler {
     }
   };
 }
+
+const previousStatus = (status: FeedbackStatus): FeedbackStatus =>
+  feedbackStatuses.find((candidate) => nextStatus(candidate) === status) ?? status;
