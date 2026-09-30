@@ -1,6 +1,9 @@
 import {
   createFeedbackSchema,
+  feedbackStatuses,
   fieldLimits,
+  nextStatus,
+  updateStatusSchema,
   voteRequestSchema,
 } from "../src/shared/contracts.js";
 
@@ -48,5 +51,26 @@ describe("feedback contracts", () => {
     expect(voteRequestSchema.safeParse({ clientId: "not/valid" }).success).toBe(
       false,
     );
+  });
+
+  it("defines the ordered status values", () => {
+    expect(feedbackStatuses).toEqual(["new", "planned", "done"]);
+    for (const status of feedbackStatuses) {
+      expect(updateStatusSchema.parse({ status })).toEqual({ status });
+    }
+  });
+
+  it("rejects unknown and missing status values", () => {
+    expect(updateStatusSchema.safeParse({ status: "archived" }).success).toBe(
+      false,
+    );
+    expect(updateStatusSchema.safeParse({ status: "NEW" }).success).toBe(false);
+    expect(updateStatusSchema.safeParse({}).success).toBe(false);
+  });
+
+  it("returns only the next forward status", () => {
+    expect(nextStatus("new")).toBe("planned");
+    expect(nextStatus("planned")).toBe("done");
+    expect(nextStatus("done")).toBeNull();
   });
 });
