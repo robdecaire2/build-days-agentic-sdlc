@@ -1,0 +1,172 @@
+name: Deploy capstone incident handoff board
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: capstone-incident-handoff-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  configuration:
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.guard.outputs.configured }}
+    steps:
+      - name: Check required OIDC variables
+        id: guard
+        shell: bash
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          TEAM_ID: ${{ vars.TEAM_ID }}
+        run: |
+          set -euo pipefail
+          configured=true
+          for name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID AZURE_RESOURCE_GROUP TEAM_ID; do
+            if [ -z "${!name}" ]; then
+              configured=false
+            fi
+          done
+
+          echo "configured=$configured" >> "$GITHUB_OUTPUT"
+
+          if [ "$configured" != "true" ]; then
+            echo "Azure deployment NOT performed: required OIDC variables are not configured" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Azure deployment configuration present for environment \`capstone-incident-handoff\`." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  deploy:
+    if: needs.configuration.outputs.configured == 'true'
+    needs: configuration
+    runs-on: ubuntu-latest
+    environment:
+      name: capstone-incident-handoff
+      url: ${{ steps.deploy_infra.outputs.app_url }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: capstone/incident-handoff-board/package-lock.json
+
+      - name: Build Bicep
+        run: az bicep build --file capstone/incident-handoff-board/infra/main.bicep
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy infrastructure
+        id: deploy_infra
+        shell: bash
+        env:
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          TEAM_ID: ${{ vars.TEAM_ID }}
+        run: |
+          set -euo pipefail
+          deployment="$(
+            az deployment group create \
+              --name "capstone-handoff-${GITHUB_RUN_ID}" \
+              --resource-group "$RESOURCE_GROUP" \
+              --template-file capstone/incident-handoff-board/infra/main.bicep \
+              --parameters capstone/incident-handoff-board/infra/main.example.bicepparam teamIdentifier="$TEAM_ID" \
+              --output json
+          )"
+
+          app_name="$(jq -r '.properties.outputs.appName.value // empty' <<< "$deployment")"
+          app_url="$(jq -r '.properties.outputs.appUrl.value // empty' <<< "$deployment")"
+          app_resource_id="$(jq -r '.properties.outputs.appResourceId.value // empty' <<< "$deployment")"
+          deployment_identifier="$(jq -r '.properties.outputs.deploymentIdentifier.value // empty' <<< "$deployment")"
+
+          if [ -z "$app_name" ] || [ -z "$app_url" ] || [ -z "$app_resource_id" ] || [ -z "$deployment_identifier" ]; then
+            echo "::error::Azure deployment must return appName, appUrl, appResourceId, and deploymentIdentifier outputs."
+            exit 1
+          fi
+
+          echo "app_name=$app_name" >> "$GITHUB_OUTPUT"
+          echo "app_url=${app_url%/}" >> "$GITHUB_OUTPUT"
+          echo "app_resource_id=$app_resource_id" >> "$GITHUB_OUTPUT"
+          echo "deployment_identifier=$deployment_identifier" >> "$GITHUB_OUTPUT"
+
+      - name: Package application
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd capstone/incident-handoff-board
+          zip -r "$RUNNER_TEMP/incident-handoff-board.zip" package.json package-lock.json src public
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: capstone-incident-handoff-package
+          path: ${{ runner.temp }}/incident-handoff-board.zip
+          if-no-files-found: error
+
+      - name: Deploy application package
+        shell: bash
+        env:
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          APP_NAME: ${{ steps.deploy_infra.outputs.app_name }}
+        run: |
+          set -euo pipefail
+          az webapp deploy \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$APP_NAME" \
+            --src-path "$RUNNER_TEMP/incident-handoff-board.zip" \
+            --type zip \
+            --clean true \
+            --restart true
+
+      - name: Install smoke-test dependencies
+        run: npm ci --prefix capstone/incident-handoff-board
+
+      - name: Verify live deployment
+        shell: bash
+        env:
+          BASE_URL: ${{ steps.deploy_infra.outputs.app_url }}
+        run: |
+          set -euo pipefail
+          probe() {
+            local path="$1"
+            for attempt in {1..36}; do
+              if curl --fail --silent --show-error "${BASE_URL}${path}" >/dev/null; then
+                return 0
+              fi
+              sleep 10
+            done
+            echo "::error::Timed out waiting for ${BASE_URL}${path}"
+            exit 1
+          }
+
+          probe /health
+          probe /ready
+
+          # Depends on Task 4 adding capstone/incident-handoff-board/scripts/smoke.mjs.
+          node capstone/incident-handoff-board/scripts/smoke.mjs
+
+      - name: Summarize deployment evidence
+        env:
+          APP_URL: ${{ steps.deploy_infra.outputs.app_url }}
+          APP_RESOURCE_ID: ${{ steps.deploy_infra.outputs.app_resource_id }}
+          DEPLOYMENT_IDENTIFIER: ${{ steps.deploy_infra.outputs.deployment_identifier }}
+        run: |
+          {
+            echo "## Capstone incident handoff deployment"
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- URL: ${APP_URL}"
+            echo "- Deployment ID: \`${DEPLOYMENT_IDENTIFIER}\`"
+            echo "- App resource ID: \`${APP_RESOURCE_ID}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
