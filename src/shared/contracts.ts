@@ -7,6 +7,8 @@ export const feedbackCategories = [
   "idea",
 ] as const;
 
+export const feedbackStatuses = ["new", "planned", "done"] as const;
+
 export const fieldLimits = {
   title: 100,
   description: 1_000,
@@ -38,9 +40,21 @@ export const voteRequestSchema = z.object({
     .regex(/^[A-Za-z0-9_-]+$/, "The workshop client ID is invalid."),
 });
 
+export const updateStatusSchema = z.object({
+  status: z.enum(feedbackStatuses),
+});
+
+export type FeedbackStatus = (typeof feedbackStatuses)[number];
+
+export function nextStatus(current: FeedbackStatus): FeedbackStatus | null {
+  const index = feedbackStatuses.indexOf(current);
+  return feedbackStatuses[index + 1] ?? null;
+}
+
 export type FeedbackCategory = (typeof feedbackCategories)[number];
 export type CreateFeedbackRequest = z.infer<typeof createFeedbackSchema>;
 export type VoteRequest = z.infer<typeof voteRequestSchema>;
+export type UpdateStatusRequest = z.infer<typeof updateStatusSchema>;
 
 export interface Feedback extends CreateFeedbackRequest {
   id: string;
