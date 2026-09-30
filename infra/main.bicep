@@ -114,6 +114,7 @@ module webApp 'br/public:avm/res/web/site:0.24.0' = {
     siteConfig: {
       alwaysOn: true
       ftpsState: 'Disabled'
+      healthCheckPath: '/health'
       http20Enabled: true
       linuxFxVersion: 'NODE|22-lts'
       minTlsVersion: '1.2'
