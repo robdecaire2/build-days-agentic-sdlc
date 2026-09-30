@@ -14,32 +14,32 @@ Receipts: each PR body has a "Task receipt" (issue, owned paths, dependency stat
 | 8 Evidence reconstruction | parent issue comment | all | no repository files |
 
 ## 1. Contract, storage port, toolchain (#8)
-- [ ] 1.1 Handoff validation and `acknowledge` transition with tests
-- [ ] 1.2 Storage port and memory adapter with tests
-- [ ] 1.3 Manifest, lockfile, eslint, vitest, README; `npm run check` passes
+- [x] 1.1 Handoff validation and `acknowledge` transition with tests
+- [x] 1.2 Storage port and memory adapter with tests
+- [x] 1.3 Manifest, lockfile, eslint, vitest, README; `npm run check` passes
 
 ## 2. API and adapters (#9)
-- [ ] 2.1 Create/list/acknowledge/errors with API tests
-- [ ] 2.2 `/health`, `/ready` (dependency-aware) with tests
-- [ ] 2.3 File and Azure Table adapters with adapter tests (table via fake client)
+- [x] 2.1 Create/list/acknowledge/errors with API tests
+- [x] 2.2 `/health`, `/ready` (dependency-aware) with tests
+- [x] 2.3 File and Azure Table adapters with adapter tests (table via fake client)
 
 ## 3. Accessible UI (#10)
-- [ ] 3.1 Create form, list, acknowledge, states, live regions
-- [ ] 3.2 UI tests for loading, empty, success, validation, failure, acknowledgement
+- [x] 3.1 Create form, list, acknowledge, states, live regions
+- [x] 3.2 UI tests for loading, empty, success, validation, failure, acknowledgement
 
 ## 4. CI (#11)
-- [ ] 4.1 Capstone CI with smoke script; passing run linked in PR
+- [x] 4.1 Capstone CI with smoke script; passing run linked in PR
 
 ## 5. Infra and deployment (#12)
-- [ ] 5.1 Pinned AVM Bicep; `az bicep build` passes
-- [ ] 5.2 OIDC deploy workflow with config guard; limitation recorded if unconfigured
+- [x] 5.1 Pinned AVM Bicep; `az bicep build` passes
+- [x] 5.2 OIDC deploy workflow with config guard; limitation recorded if unconfigured
 
 ## 6. Defect loop
-- [ ] 6.1 Reproduce, file bug issue linked to #7
-- [ ] 6.2 Fix with failing-before/passing-after regression test in linked PR
+- [x] 6.1 Reproduce, file bug issue linked to #7
+- [x] 6.2 Fix with failing-before/passing-after regression test in linked PR
 
 ## 7. GH-AW
-- [ ] 7.1 Source + lock via `gh aw compile`; one `add-comment` output; run receipt
+- [x] 7.1 Source + lock via `gh aw compile`; one `add-comment` output; run receipt
 
 ## 8. Evidence
 - [ ] 8.1 Transcript-free reconstruction comment on #7 reporting first missing/contradictory receipt
