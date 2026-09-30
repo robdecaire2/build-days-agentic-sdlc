@@ -10,6 +10,7 @@ export default tseslint.config(
       "dist",
       "coverage",
       "node_modules",
+      "capstone/**",
       "eslint.config.js",
       "vite.config.ts",
       "vitest.config.ts",
