@@ -1,10 +1,57 @@
 const API_PATH = '/api/handoffs';
+const STORAGE_KEY = 'incident-handoff-board-vibe-mode';
 const LIMITS = Object.freeze({ service: 80, summary: 500, nextAction: 500 });
 const FIELD_ORDER = ['service', 'summary', 'nextAction'];
 const FIELD_LABELS = Object.freeze({
   service: 'Service',
   summary: 'Summary',
   nextAction: 'Next action',
+});
+const MODES = Object.freeze({ NORMAL: 'normal', VIBE: 'vibe' });
+const KONAMI_CODE = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a'];
+const COPY = Object.freeze({
+  [MODES.NORMAL]: {
+    title: 'Incident handoff board',
+    formHeading: 'Record a handoff',
+    listHeading: 'Current handoffs',
+    submitButton: 'Record handoff',
+    toggleButton: 'Mode: Normal',
+    loading: 'Loading handoffs…',
+    empty: 'No handoffs recorded yet.',
+    openState: 'Open',
+    acknowledgedState: 'Acknowledged',
+    acknowledgedAtConnector: ' at ',
+    acknowledgeButton: 'Acknowledge',
+    retryButton: 'Retry',
+    createSuccess: (service) => `Recorded handoff for ${service}.`,
+    createFailure: (message) => `Could not record the handoff. ${message}`,
+    loadFailure: (message) => `Could not load the handoff board. ${message}`,
+    acknowledgeSuccess: (service) => `Acknowledged handoff for ${service}.`,
+    acknowledgeConflict: (service) => `${service} was already acknowledged.`,
+    acknowledgeNotFound: (service) => `${service} could not be found for acknowledgement.`,
+    acknowledgeFailure: (service, message) => `Could not acknowledge ${service}. ${message}`,
+  },
+  [MODES.VIBE]: {
+    title: 'Incident pass the aux board',
+    formHeading: 'Record a pass the aux',
+    listHeading: 'Current passes on the aux',
+    submitButton: 'Pass the aux',
+    toggleButton: 'Mode: Vibe',
+    loading: 'Loading the pass the aux board…',
+    empty: 'No passes on the aux yet.',
+    openState: 'Still live',
+    acknowledgedState: 'No cap, fixed',
+    acknowledgedAtConnector: ' at ',
+    acknowledgeButton: 'Bet, I got this',
+    retryButton: 'Run it back',
+    createSuccess: (service) => `Pass the aux logged for ${service}.`,
+    createFailure: (message) => `Could not log the pass the aux. ${message}`,
+    loadFailure: (message) => `Could not load the pass the aux board. ${message}`,
+    acknowledgeSuccess: (service) => `No cap, fixed for ${service}.`,
+    acknowledgeConflict: (service) => `${service} is already no cap, fixed.`,
+    acknowledgeNotFound: (service) => `${service} vanished before the fix landed.`,
+    acknowledgeFailure: (service, message) => `Could not lock in the fix for ${service}. ${message}`,
+  },
 });
 
 let mountCount = 0;
@@ -15,46 +62,68 @@ export function mountBoard(root, { fetch = globalThis.fetch.bind(globalThis) } =
   }
 
   mountCount += 1;
+
   const idPrefix = `handoff-board-${mountCount}`;
+  const documentRef = root.ownerDocument;
+  const view = documentRef.defaultView;
+  const pageHeading = documentRef.querySelector('main h1');
   const fieldRefs = new Map();
   const errorRefs = new Map();
-  let handoffs = [];
+  const state = {
+    handoffs: [],
+    mode: readMode(view?.localStorage),
+    listState: 'loading',
+    statusMessage: null,
+    alertMessage: null,
+  };
   let retryAction = null;
+  let konamiIndex = 0;
 
   root.replaceChildren();
 
-  const board = createElement('div', { className: 'board' });
-  const messageSection = createElement('div');
-  const statusRegion = createElement('p', {
+  const board = createElement(documentRef, 'div', { className: 'board' });
+  const toolbar = createElement(documentRef, 'div', { className: 'toolbar' });
+  const toggleButton = createElement(documentRef, 'button', {
+    type: 'button',
+    className: 'secondary',
+    ariaLabel: 'Toggle vibe mode',
+  });
+  const messageSection = createElement(documentRef, 'div');
+  const statusRegion = createElement(documentRef, 'p', {
     className: 'status-banner',
     role: 'status',
     ariaLive: 'polite',
   });
-  const alertRegion = createElement('div');
-  const formSection = createElement('section', { className: 'panel' });
-  const listSection = createElement('section', { className: 'panel' });
-  const listHeading = createElement('h2', { text: 'Current handoffs' });
-  const listStatus = createElement('p', { className: 'list-status', role: 'status' });
-  const handoffList = createElement('ul', { className: 'handoff-list' });
-  const form = createElement('form');
-  const submitButton = createElement('button', { type: 'submit', text: 'Record handoff' });
+  const alertRegion = createElement(documentRef, 'div');
+  const formSection = createElement(documentRef, 'section', { className: 'panel' });
+  const formHeading = createElement(documentRef, 'h2');
+  const listSection = createElement(documentRef, 'section', { className: 'panel' });
+  const listHeading = createElement(documentRef, 'h2');
+  const listStatus = createElement(documentRef, 'p', { className: 'list-status', role: 'status' });
+  const handoffList = createElement(documentRef, 'ul', { className: 'handoff-list' });
+  const form = createElement(documentRef, 'form');
+  const submitButton = createElement(documentRef, 'button', {
+    type: 'submit',
+    ariaLabel: 'Record handoff',
+  });
 
+  toolbar.append(toggleButton);
   messageSection.append(statusRegion, alertRegion);
-  formSection.append(createElement('h2', { text: 'Record a handoff' }), form);
+  formSection.append(formHeading, form);
   listSection.append(listHeading, listStatus, handoffList);
-  board.append(messageSection, formSection, listSection);
+  board.append(toolbar, messageSection, formSection, listSection);
   root.append(board);
 
   for (const field of FIELD_ORDER) {
     const inputId = `${idPrefix}-${field}`;
     const errorId = `${inputId}-error`;
-    const fieldWrap = createElement('div', { className: 'field' });
-    const label = createElement('label', { for: inputId, text: FIELD_LABELS[field] });
+    const fieldWrap = createElement(documentRef, 'div', { className: 'field' });
+    const label = createElement(documentRef, 'label', { for: inputId, text: FIELD_LABELS[field] });
     const input =
       field === 'service'
-        ? createElement('input', { id: inputId, name: field, type: 'text', maxLength: LIMITS[field] })
-        : createElement('textarea', { id: inputId, name: field, maxLength: LIMITS[field] });
-    const error = createElement('p', { id: errorId, className: 'field-error' });
+        ? createElement(documentRef, 'input', { id: inputId, name: field, type: 'text', maxLength: LIMITS[field] })
+        : createElement(documentRef, 'textarea', { id: inputId, name: field, maxLength: LIMITS[field] });
+    const error = createElement(documentRef, 'p', { id: errorId, className: 'field-error' });
     fieldRefs.set(field, input);
     errorRefs.set(field, error);
     fieldWrap.append(label, input, error);
@@ -63,11 +132,29 @@ export function mountBoard(root, { fetch = globalThis.fetch.bind(globalThis) } =
 
   form.append(submitButton);
 
+  toggleButton.addEventListener('click', () => {
+    setMode(state.mode === MODES.NORMAL ? MODES.VIBE : MODES.NORMAL);
+  });
+
+  board.addEventListener('keydown', (event) => {
+    const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+    const expected = KONAMI_CODE[konamiIndex];
+    if (key === expected) {
+      konamiIndex += 1;
+      if (konamiIndex === KONAMI_CODE.length) {
+        konamiIndex = 0;
+        setMode(state.mode === MODES.NORMAL ? MODES.VIBE : MODES.NORMAL);
+      }
+      return;
+    }
+    konamiIndex = key === KONAMI_CODE[0] ? 1 : 0;
+  });
+
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     clearFieldErrors(errorRefs, fieldRefs);
-    clearAlert(alertRegion);
-    announce(statusRegion, '');
+    setAlertMessage(null);
+    setStatusMessage(null);
 
     const values = readFormValues(fieldRefs);
     const validation = validateForm(values);
@@ -78,6 +165,29 @@ export function mountBoard(root, { fetch = globalThis.fetch.bind(globalThis) } =
 
     await submitHandoff(validation.value);
   });
+
+  function getCopy() {
+    return COPY[state.mode];
+  }
+
+  function setMode(mode) {
+    state.mode = mode === MODES.VIBE ? MODES.VIBE : MODES.NORMAL;
+    writeMode(view?.localStorage, state.mode);
+    renderStaticCopy();
+    renderStatusMessage();
+    renderAlertMessage();
+    renderHandoffs();
+  }
+
+  function setStatusMessage(message) {
+    state.statusMessage = message;
+    renderStatusMessage();
+  }
+
+  function setAlertMessage(message) {
+    state.alertMessage = message;
+    renderAlertMessage();
+  }
 
   async function submitHandoff(payload) {
     retryAction = null;
@@ -97,21 +207,19 @@ export function mountBoard(root, { fetch = globalThis.fetch.bind(globalThis) } =
       }
 
       if (!response.ok) {
-        throw new Error(body?.error?.message || 'The handoff could not be recorded.');
+        throw new Error(body?.error?.message || 'Try again.');
       }
 
-      handoffs = [body, ...handoffs.filter((handoff) => handoff.id !== body.id)];
+      state.handoffs = [body, ...state.handoffs.filter((handoff) => handoff.id !== body.id)];
+      state.listState = state.handoffs.length > 0 ? 'ready' : 'empty';
       renderHandoffs();
       form.reset();
       clearFieldErrors(errorRefs, fieldRefs);
-      clearAlert(alertRegion);
-      announce(statusRegion, `Recorded handoff for ${body.service}.`);
+      setAlertMessage(null);
+      setStatusMessage({ type: 'createSuccess', service: body.service });
     } catch (error) {
       retryAction = () => submitHandoff(payload);
-      showAlert(alertRegion, `Could not record the handoff. ${error.message}`, {
-        label: 'Retry',
-        onRetry: retryAction,
-      });
+      setAlertMessage({ type: 'createFailure', message: error.message });
     } finally {
       submitButton.disabled = false;
     }
@@ -119,84 +227,173 @@ export function mountBoard(root, { fetch = globalThis.fetch.bind(globalThis) } =
 
   async function loadHandoffs({ preserveAlert = false } = {}) {
     if (!preserveAlert) {
-      clearAlert(alertRegion);
+      setAlertMessage(null);
     }
-    listStatus.textContent = 'Loading handoffs…';
-    handoffList.replaceChildren();
+    state.listState = 'loading';
+    renderHandoffs();
 
     try {
       const response = await fetch(API_PATH);
       const body = await readJson(response);
       if (!response.ok) {
-        throw new Error(body?.error?.message || 'The handoffs could not be loaded.');
+        throw new Error(body?.error?.message || 'Try again.');
       }
 
-      handoffs = Array.isArray(body?.handoffs) ? body.handoffs : [];
+      state.handoffs = Array.isArray(body?.handoffs) ? body.handoffs : [];
+      state.listState = state.handoffs.length > 0 ? 'ready' : 'empty';
       renderHandoffs();
     } catch (error) {
-      handoffs = [];
-      handoffList.replaceChildren();
-      listStatus.textContent = 'Unable to load handoffs.';
-      showAlert(alertRegion, `Could not load the handoff board. ${error.message}`, {
-        label: 'Retry',
-        onRetry: () => loadHandoffs(),
-      });
+      state.handoffs = [];
+      state.listState = 'loadError';
+      renderHandoffs();
+      setAlertMessage({ type: 'loadFailure', message: error.message });
     }
   }
 
-  function renderHandoffs() {
-    handoffList.replaceChildren();
+  function renderStaticCopy() {
+    const copy = getCopy();
+    if (pageHeading) {
+      pageHeading.textContent = copy.title;
+    }
+    documentRef.title = copy.title;
+    formHeading.textContent = copy.formHeading;
+    listHeading.textContent = copy.listHeading;
+    submitButton.textContent = copy.submitButton;
+    toggleButton.textContent = copy.toggleButton;
+    toggleButton.setAttribute('aria-pressed', String(state.mode === MODES.VIBE));
+  }
 
-    if (handoffs.length === 0) {
-      listStatus.textContent = 'No handoffs recorded yet.';
+  function renderStatusMessage() {
+    const copy = getCopy();
+    if (!state.statusMessage) {
+      statusRegion.textContent = '';
+      return;
+    }
+    if (state.statusMessage.type === 'createSuccess') {
+      statusRegion.textContent = copy.createSuccess(state.statusMessage.service);
+      return;
+    }
+    if (state.statusMessage.type === 'acknowledgeSuccess') {
+      statusRegion.textContent = copy.acknowledgeSuccess(state.statusMessage.service);
+      return;
+    }
+    statusRegion.textContent = '';
+  }
+
+  function renderAlertMessage() {
+    const copy = getCopy();
+    if (!state.alertMessage) {
+      alertRegion.replaceChildren();
       return;
     }
 
+    const alert = createElement(documentRef, 'div', { className: 'alert', role: 'alert' });
+    const body = createElement(documentRef, 'p');
+
+    if (state.alertMessage.type === 'createFailure') {
+      body.textContent = copy.createFailure(state.alertMessage.message);
+    } else if (state.alertMessage.type === 'loadFailure') {
+      body.textContent = copy.loadFailure(state.alertMessage.message);
+    } else if (state.alertMessage.type === 'acknowledgeConflict') {
+      body.textContent = copy.acknowledgeConflict(state.alertMessage.service);
+    } else if (state.alertMessage.type === 'acknowledgeNotFound') {
+      body.textContent = copy.acknowledgeNotFound(state.alertMessage.service);
+    } else {
+      body.textContent = copy.acknowledgeFailure(state.alertMessage.service, state.alertMessage.message);
+    }
+
+    alert.append(body);
+
+    if (retryAction) {
+      const actions = createElement(documentRef, 'div', { className: 'alert-actions' });
+      const button = createElement(documentRef, 'button', {
+        type: 'button',
+        className: 'secondary',
+        text: copy.retryButton,
+        ariaLabel: 'Retry',
+      });
+      button.addEventListener('click', retryAction);
+      actions.append(button);
+      alert.append(actions);
+    }
+
+    alertRegion.replaceChildren(alert);
+  }
+
+  function renderListStatus() {
+    const copy = getCopy();
+    if (state.listState === 'loading') {
+      listStatus.textContent = copy.loading;
+      return;
+    }
+    if (state.listState === 'empty') {
+      listStatus.textContent = copy.empty;
+      return;
+    }
+    if (state.listState === 'loadError') {
+      listStatus.textContent = '';
+      return;
+    }
     listStatus.textContent = '';
-    for (const handoff of handoffs) {
+  }
+
+  function renderHandoffs() {
+    renderListStatus();
+    handoffList.replaceChildren();
+
+    if (state.listState !== 'ready') {
+      return;
+    }
+
+    for (const handoff of state.handoffs) {
       handoffList.append(renderHandoff(handoff));
     }
   }
 
   function renderHandoff(handoff) {
-    const item = createElement('li', { className: 'handoff-card' });
-    const heading = createElement('h3', { text: handoff.service });
-    const summary = createElement('p');
-    const nextAction = createElement('p');
-    const state = createElement('p', { className: 'handoff-state' });
-    const created = createElement('p', { className: 'handoff-meta' });
+    const copy = getCopy();
+    const item = createElement(documentRef, 'li', { className: 'handoff-card' });
+    const heading = createElement(documentRef, 'h3', { text: handoff.service });
+    const summary = createElement(documentRef, 'p');
+    const nextAction = createElement(documentRef, 'p');
+    const stateText = createElement(documentRef, 'p', { className: 'handoff-state' });
+    const created = createElement(documentRef, 'p', { className: 'handoff-meta' });
 
-    summary.append(createElement('strong', { text: 'Summary: ' }), document.createTextNode(handoff.summary));
-    nextAction.append(createElement('strong', { text: 'Next action: ' }), document.createTextNode(handoff.nextAction));
+    summary.append(createElement(documentRef, 'strong', { text: 'Summary: ' }), documentRef.createTextNode(handoff.summary));
+    nextAction.append(
+      createElement(documentRef, 'strong', { text: 'Next action: ' }),
+      documentRef.createTextNode(handoff.nextAction),
+    );
     created.append(
-      createElement('strong', { text: 'Created: ' }),
-      createElement('time', { dateTime: handoff.createdAt, text: handoff.createdAt }),
+      createElement(documentRef, 'strong', { text: 'Created: ' }),
+      createElement(documentRef, 'time', { dateTime: handoff.createdAt, text: handoff.createdAt }),
     );
 
     if (handoff.state === 'acknowledged') {
-      state.append(
-        document.createTextNode('Acknowledged'),
-        document.createTextNode(' at '),
-        createElement('time', { dateTime: handoff.acknowledgedAt, text: handoff.acknowledgedAt }),
+      stateText.append(
+        documentRef.createTextNode(copy.acknowledgedState),
+        documentRef.createTextNode(copy.acknowledgedAtConnector),
+        createElement(documentRef, 'time', { dateTime: handoff.acknowledgedAt, text: handoff.acknowledgedAt }),
       );
-    } else {
-      state.textContent = 'Open';
-      const button = createElement('button', {
-        type: 'button',
-        text: `Acknowledge ${handoff.service}`,
-      });
-      button.addEventListener('click', () => acknowledgeHandoff(handoff, button));
-      item.append(heading, summary, nextAction, state, created, button);
+      item.append(heading, summary, nextAction, stateText, created);
       return item;
     }
 
-    item.append(heading, summary, nextAction, state, created);
+    stateText.textContent = copy.openState;
+    const button = createElement(documentRef, 'button', {
+      type: 'button',
+      text: copy.acknowledgeButton,
+      ariaLabel: `Acknowledge ${handoff.service}`,
+    });
+    button.addEventListener('click', () => acknowledgeHandoff(handoff, button));
+    item.append(heading, summary, nextAction, stateText, created, button);
     return item;
   }
 
   async function acknowledgeHandoff(handoff, button) {
     button.disabled = true;
-    clearAlert(alertRegion);
+    retryAction = null;
+    setAlertMessage(null);
 
     try {
       const response = await fetch(`${API_PATH}/${encodeURIComponent(handoff.id)}/acknowledge`, {
@@ -205,26 +402,42 @@ export function mountBoard(root, { fetch = globalThis.fetch.bind(globalThis) } =
       const body = await readJson(response);
 
       if (!response.ok) {
-        const problem = describeAcknowledgeFailure(response.status, handoff.service, body?.error?.message);
-        showAlert(alertRegion, problem);
+        if (response.status === 409) {
+          setAlertMessage({ type: 'acknowledgeConflict', service: handoff.service });
+        } else if (response.status === 404) {
+          setAlertMessage({ type: 'acknowledgeNotFound', service: handoff.service });
+        } else {
+          setAlertMessage({
+            type: 'acknowledgeFailure',
+            service: handoff.service,
+            message: body?.error?.message || 'Try again.',
+          });
+        }
         await loadHandoffs({ preserveAlert: true });
         return;
       }
 
-      handoffs = handoffs.map((entry) => (entry.id === body.id ? body : entry));
+      state.handoffs = state.handoffs.map((entry) => (entry.id === body.id ? body : entry));
+      state.listState = state.handoffs.length > 0 ? 'ready' : 'empty';
       renderHandoffs();
-      announce(statusRegion, `Acknowledged handoff for ${body.service}.`);
+      setStatusMessage({ type: 'acknowledgeSuccess', service: body.service });
     } catch (error) {
-      showAlert(alertRegion, `Could not acknowledge ${handoff.service}. ${error.message}`);
+      setAlertMessage({
+        type: 'acknowledgeFailure',
+        service: handoff.service,
+        message: error.message,
+      });
       await loadHandoffs({ preserveAlert: true });
     }
   }
 
+  renderStaticCopy();
+  renderStatusMessage();
+  renderAlertMessage();
+  renderHandoffs();
   loadHandoffs();
 
-  return {
-    refresh: loadHandoffs,
-  };
+  return { refresh: loadHandoffs };
 }
 
 function readFormValues(fieldRefs) {
@@ -276,42 +489,20 @@ function clearFieldErrors(errorRefs, fieldRefs) {
   }
 }
 
-function showAlert(container, message, action) {
-  const alert = createElement('div', { className: 'alert', role: 'alert' });
-  const body = createElement('p', { text: message });
-  alert.append(body);
-
-  if (action) {
-    const actions = createElement('div', { className: 'alert-actions' });
-    const button = createElement('button', {
-      type: 'button',
-      className: 'secondary',
-      text: action.label,
-    });
-    button.addEventListener('click', action.onRetry);
-    actions.append(button);
-    alert.append(actions);
+function readMode(storage) {
+  try {
+    return storage?.getItem(STORAGE_KEY) === MODES.VIBE ? MODES.VIBE : MODES.NORMAL;
+  } catch {
+    return MODES.NORMAL;
   }
-
-  container.replaceChildren(alert);
 }
 
-function clearAlert(container) {
-  container.replaceChildren();
-}
-
-function announce(region, message) {
-  region.textContent = message;
-}
-
-function describeAcknowledgeFailure(status, service, fallbackMessage) {
-  if (status === 409) {
-    return `${service} was already acknowledged.`;
+function writeMode(storage, mode) {
+  try {
+    storage?.setItem(STORAGE_KEY, mode);
+  } catch {
+    // Ignore unavailable storage and keep the current in-memory mode.
   }
-  if (status === 404) {
-    return `${service} could not be found for acknowledgement.`;
-  }
-  return `Could not acknowledge ${service}. ${fallbackMessage || 'Try again.'}`;
 }
 
 async function readJson(response) {
@@ -322,8 +513,8 @@ async function readJson(response) {
   }
 }
 
-function createElement(tagName, options = {}) {
-  const element = document.createElement(tagName);
+function createElement(documentRef, tagName, options = {}) {
+  const element = documentRef.createElement(tagName);
 
   if (options.className) {
     element.className = options.className;
@@ -345,6 +536,9 @@ function createElement(tagName, options = {}) {
   }
   if (options.ariaLive) {
     element.setAttribute('aria-live', options.ariaLive);
+  }
+  if (options.ariaLabel) {
+    element.setAttribute('aria-label', options.ariaLabel);
   }
   if (options.for) {
     element.htmlFor = options.for;
